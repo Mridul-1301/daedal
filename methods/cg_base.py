@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Optional, Tuple, Dict
-from linear_solver_project.core.base_solver import BaseSolver
+from core.base_solver import BaseSolver
 
 class ConjugateGradientSolver(BaseSolver):
     """Implementation of the Conjugate Gradient method for solving Ax = b."""
