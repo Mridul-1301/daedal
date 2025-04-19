@@ -12,6 +12,7 @@ from methods.cg_base import ConjugateGradientSolver
 from methods.cg_optimization import CGOptimizationSolver
 from methods.cg_projection import CGProjectionSolver
 from methods.cg_krylov import CGKrylovSolver
+from methods.gmres import GMRESSolver
 from utils.timers import Timer
 from utils.memory_profiler import MemoryProfiler
 from utils.plotters import plot_residual_history, plot_comparison, plot_performance_comparison
@@ -23,7 +24,8 @@ SOLVERS: Dict[str, Type[BaseSolver]] = {
     'cg': ConjugateGradientSolver,
     'cg-opt': CGOptimizationSolver,
     'cg-proj': CGProjectionSolver,
-    'cg-krylov': CGKrylovSolver
+    'cg-krylov': CGKrylovSolver,
+    'gmres': GMRESSolver
 }
 
 def create_example_problem(example_type: str, size: int) -> Problem:
@@ -131,6 +133,9 @@ def main():
                     x_exact = np.linalg.solve(problem.A, problem.b)
                     a_norm_error = solver.compute_a_norm_error(problem.A, x, x_exact)
                     print(f"A-norm error: {a_norm_error:.6e}")
+            elif solver_name == 'gmres':
+                # For GMRES, print the dimension of the Krylov subspace
+                print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
         
         # Plot comparison
         if args.plot:
@@ -169,7 +174,7 @@ def main():
         print(f"Final residual: {stats['final_residual']:.2e}")
         print(f"Converged: {stats['converged']}")
         
-        # Print additional stats for CG variants
+        # Print additional stats for CG variants and GMRES
         if args.method.startswith('cg-'):
             if args.method == 'cg-opt':
                 quad_value = solver.compute_quadratic_value(problem.A, problem.b, x)
@@ -183,6 +188,9 @@ def main():
                 x_exact = np.linalg.solve(problem.A, problem.b)
                 a_norm_error = solver.compute_a_norm_error(problem.A, x, x_exact)
                 print(f"A-norm error: {a_norm_error:.6e}")
+        elif args.method == 'gmres':
+            # For GMRES, print the dimension of the Krylov subspace
+            print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
         
         # Plot if requested
         if args.plot:

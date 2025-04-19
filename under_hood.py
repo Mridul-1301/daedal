@@ -14,6 +14,7 @@ from methods.cg_base import ConjugateGradientSolver
 from methods.cg_optimization import CGOptimizationSolver
 from methods.cg_projection import CGProjectionSolver
 from methods.cg_krylov import CGKrylovSolver
+from methods.gmres import GMRESSolver
 from utils.timers import Timer
 
 # Map of available solvers
@@ -23,7 +24,8 @@ SOLVERS: Dict[str, Type[BaseSolver]] = {
     'cg': ConjugateGradientSolver,
     'cg-opt': CGOptimizationSolver,
     'cg-proj': CGProjectionSolver,
-    'cg-krylov': CGKrylovSolver
+    'cg-krylov': CGKrylovSolver,
+    'gmres': GMRESSolver
 }
 
 class InstrumentedSolver:
@@ -63,6 +65,8 @@ class InstrumentedSolver:
             return self._solve_jacobi(A_copy, b_copy, x0_copy)
         elif solver_name == 'GaussSeidelSolver':
             return self._solve_gauss_seidel(A_copy, b_copy, x0_copy)
+        elif solver_name == 'GMRESSolver':
+            return self._solve_gmres(A_copy, b_copy, x0_copy)
         elif 'ConjugateGradient' in solver_name or 'CG' in solver_name:
             return self._solve_cg(A_copy, b_copy, x0_copy)
         else:
@@ -222,6 +226,155 @@ class InstrumentedSolver:
             'final_residual': residual,
             'converged': iterations < self.solver.max_iter,
             'solution_history_count': len(self.solution_history)
+        }
+        
+        self.solver.iterations = iterations
+        
+        return x, stats
+
+    def _solve_gmres(self, A: np.ndarray, b: np.ndarray, x0: Optional[np.ndarray] = None) -> Tuple[np.ndarray, dict]:
+        """Instrumented GMRES method to track intermediate solutions."""
+        n = len(b)
+        x = x0 if x0 is not None else np.zeros(n)
+        
+        # Save initial solution
+        self.solution_history = [x.copy()]
+        
+        # Compute initial residual and its norm
+        r = b - A @ x
+        beta = np.linalg.norm(r)
+        
+        # Initialize residual history
+        self.solver.residual_history = [beta]
+        
+        # Check for trivial case (b = 0 or already converged)
+        if beta < self.solver.tol:
+            stats = {
+                'iterations': 0,
+                'final_residual': beta,
+                'converged': True,
+                'solution_history_count': 1,
+                'arnoldi_dimension': 0
+            }
+            return x, stats
+        
+        # Initialize the Arnoldi basis with the normalized residual
+        v = r / beta
+        arnoldi_vectors = [v]
+        
+        # Initialize the Hessenberg matrix (upper triangular part)
+        H = np.zeros((self.solver.max_iter + 1, self.solver.max_iter))
+        
+        # Initialize the RHS of the least squares problem
+        g = np.zeros(self.solver.max_iter + 1)
+        g[0] = beta
+        
+        # Initialize Givens rotation parameters
+        cs = np.zeros(self.solver.max_iter)
+        sn = np.zeros(self.solver.max_iter)
+        
+        iterations = 0
+        
+        # Begin GMRES iterations
+        for k in range(self.solver.max_iter):
+            iterations = k + 1
+            
+            # Arnoldi process to compute the next basis vector
+            w = A @ arnoldi_vectors[k]
+            
+            # Orthogonalize w against previous Arnoldi vectors (Modified Gram-Schmidt)
+            for j in range(k + 1):
+                H[j, k] = np.dot(w, arnoldi_vectors[j])
+                w = w - H[j, k] * arnoldi_vectors[j]
+            
+            # Get the norm of the orthogonalized vector
+            h_next = np.linalg.norm(w)
+            
+            # If h_next is too small, we have reached invariant subspace
+            if abs(h_next) < 1e-12:
+                break
+                
+            H[k + 1, k] = h_next
+            
+            # Add the new normalized vector to the Arnoldi basis
+            arnoldi_vectors.append(w / h_next)
+            
+            # Apply previous Givens rotations to the new column of the Hessenberg matrix
+            for i in range(k):
+                # Apply the i-th Givens rotation to (i, k) and (i+1, k) elements
+                temp = H[i, k]
+                H[i, k] = cs[i] * temp + sn[i] * H[i + 1, k]
+                H[i + 1, k] = -sn[i] * temp + cs[i] * H[i + 1, k]
+            
+            # Compute the Givens rotation coefficients for current iteration
+            h1 = H[k, k]
+            h2 = H[k + 1, k]
+            denom = np.sqrt(h1**2 + h2**2)
+            
+            # If values are too small, avoid division by zero
+            if denom < 1e-14:
+                cs[k] = 0.0
+                sn[k] = 1.0
+            else:
+                cs[k] = h1 / denom  # cosine
+                sn[k] = h2 / denom  # sine
+            
+            # Apply the Givens rotation to the Hessenberg matrix
+            H[k, k] = cs[k] * h1 + sn[k] * h2
+            H[k + 1, k] = 0.0
+            
+            # Apply the rotation to the RHS vector
+            temp = g[k]
+            g[k] = cs[k] * temp + sn[k] * g[k + 1]
+            g[k + 1] = -sn[k] * temp + cs[k] * g[k + 1]
+            
+            # Update the residual norm
+            residual = abs(g[k + 1])
+            self.solver.residual_history.append(residual)
+            
+            # Save intermediate solution at checkpoints
+            if k % self.checkpoint_freq == 0 or self.solver._check_convergence(residual):
+                # Solve the upper triangular system to get current solution
+                y = np.zeros(k+1)
+                for i in range(k, -1, -1):
+                    y[i] = g[i]
+                    for j in range(i + 1, k + 1):
+                        y[i] -= H[i, j] * y[j]
+                    y[i] /= H[i, i]
+                
+                # Compute the current solution
+                x_new = x.copy()
+                for i in range(k + 1):
+                    x_new = x_new + y[i] * arnoldi_vectors[i]
+                
+                self.solution_history.append(x_new.copy())
+            
+            # Check convergence
+            if self.solver._check_convergence(residual):
+                break
+        
+        # Solve the upper triangular system to get final solution coefficients
+        y = np.zeros(iterations)
+        for i in range(iterations-1, -1, -1):
+            y[i] = g[i]
+            for j in range(i+1, iterations):
+                y[i] -= H[i, j] * y[j]
+            y[i] /= H[i, i]
+        
+        # Compute the final solution
+        for i in range(iterations):
+            x = x + y[i] * arnoldi_vectors[i]
+        
+        # Ensure final solution is saved if not already
+        if (iterations-1) % self.checkpoint_freq != 0:
+            self.solution_history.append(x.copy())
+        
+        stats = {
+            'iterations': iterations,
+            'final_residual': residual,
+            'converged': residual < self.solver.tol,
+            'solution_history_count': len(self.solution_history),
+            'arnoldi_dimension': len(arnoldi_vectors)
         }
         
         self.solver.iterations = iterations
