@@ -13,6 +13,7 @@ from methods.cg_optimization import CGOptimizationSolver
 from methods.cg_projection import CGProjectionSolver
 from methods.cg_krylov import CGKrylovSolver
 from methods.gmres import GMRESSolver
+from methods.multilevel import MultilevelSolver
 from utils.timers import Timer
 from utils.memory_profiler import MemoryProfiler
 from utils.plotters import plot_residual_history, plot_comparison, plot_performance_comparison
@@ -25,7 +26,8 @@ SOLVERS: Dict[str, Type[BaseSolver]] = {
     'cg-opt': CGOptimizationSolver,
     'cg-proj': CGProjectionSolver,
     'cg-krylov': CGKrylovSolver,
-    'gmres': GMRESSolver
+    'gmres': GMRESSolver,
+    'multilevel': MultilevelSolver
 }
 
 def create_example_problem(example_type: str, size: int) -> Problem:
@@ -70,6 +72,10 @@ def main():
                       help='Plot residual history')
     parser.add_argument('--compare', action='store_true',
                       help='Compare all solvers')
+    parser.add_argument('--pre-smooth', type=int, default=2,
+                      help='Number of pre-smoothing steps for multilevel method')
+    parser.add_argument('--post-smooth', type=int, default=2,
+                      help='Number of post-smoothing steps for multilevel method')
     
     args = parser.parse_args()
     
@@ -92,6 +98,10 @@ def main():
             # Initialize solver with appropriate parameters
             if solver_name == 'jacobi':
                 solver = solver_class(max_iter=args.max_iter, tol=args.tol)
+            elif solver_name == 'multilevel':
+                solver = solver_class(max_iter=args.max_iter, tol=args.tol, 
+                                      pre_smoothing_steps=args.pre_smooth,
+                                      post_smoothing_steps=args.post_smooth)
             else:
                 solver = solver_class(max_iter=args.max_iter, tol=args.tol)
             
@@ -136,6 +146,9 @@ def main():
             elif solver_name == 'gmres':
                 # For GMRES, print the dimension of the Krylov subspace
                 print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
+            elif solver_name == 'multilevel':
+                print(f"Pre-smoothing steps: {args.pre_smooth}")
+                print(f"Post-smoothing steps: {args.post_smooth}")
         
         # Plot comparison
         if args.plot:
@@ -149,6 +162,10 @@ def main():
         # Initialize solver with appropriate parameters
         if args.method == 'jacobi':
             solver = solver_class(max_iter=args.max_iter, tol=args.tol)
+        elif args.method == 'multilevel':
+            solver = solver_class(max_iter=args.max_iter, tol=args.tol, 
+                                  pre_smoothing_steps=args.pre_smooth,
+                                  post_smoothing_steps=args.post_smooth)
         else:
             solver = solver_class(max_iter=args.max_iter, tol=args.tol)
         
@@ -174,7 +191,7 @@ def main():
         print(f"Final residual: {stats['final_residual']:.2e}")
         print(f"Converged: {stats['converged']}")
         
-        # Print additional stats for CG variants and GMRES
+        # Print additional stats for CG variants, GMRES, and Multilevel
         if args.method.startswith('cg-'):
             if args.method == 'cg-opt':
                 quad_value = solver.compute_quadratic_value(problem.A, problem.b, x)
@@ -191,6 +208,9 @@ def main():
         elif args.method == 'gmres':
             # For GMRES, print the dimension of the Krylov subspace
             print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
+        elif args.method == 'multilevel':
+            print(f"Pre-smoothing steps: {args.pre_smooth}")
+            print(f"Post-smoothing steps: {args.post_smooth}")
         
         # Plot if requested
         if args.plot:
