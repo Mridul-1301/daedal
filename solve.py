@@ -145,7 +145,7 @@ def main():
                     print(f"A-norm error: {a_norm_error:.6e}")
             elif solver_name == 'gmres':
                 # For GMRES, print the dimension of the Krylov subspace
-                print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
+                print(f"Krylov subspace dimension: {stats['subspace_dimension']}")
             elif solver_name == 'multilevel':
                 print(f"Pre-smoothing steps: {args.pre_smooth}")
                 print(f"Post-smoothing steps: {args.post_smooth}")
@@ -207,7 +207,7 @@ def main():
                 print(f"A-norm error: {a_norm_error:.6e}")
         elif args.method == 'gmres':
             # For GMRES, print the dimension of the Krylov subspace
-            print(f"Arnoldi vectors generated: {stats['arnoldi_dimension']}")
+            print(f"Krylov subspace dimension: {stats['subspace_dimension']}")
         elif args.method == 'multilevel':
             print(f"Pre-smoothing steps: {args.pre_smooth}")
             print(f"Post-smoothing steps: {args.post_smooth}")

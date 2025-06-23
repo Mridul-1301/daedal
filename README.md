@@ -50,7 +50,7 @@ pip install -r requirements.txt
 The main entry point is `solve.py`, which provides a command-line interface for selecting the solver and problem type:
 
 ```bash
-python solve.py --method [jacobi|gauss-seidel|cg|cg-opt|cg-proj|cg-krylov] \
+python solve.py --method [jacobi|gauss-seidel|cg|cg-opt|cg-proj|cg-krylov|gmres] \
                 --example [diagonally-dominant|ill-conditioned|sparse] \
                 --size 100 \
                 --max-iter 1000 \
@@ -62,6 +62,29 @@ To compare all solvers:
 ```bash
 python solve.py --compare --example sparse --size 200 --plot
 ```
+
+### GMRES: Arnoldi vs Lanczos (Symmetric/Non-Symmetric)
+
+The GMRES solver automatically chooses the most efficient Krylov subspace iteration based on matrix symmetry:
+
+- **Arnoldi (General/Non-Symmetric):**
+  - Used for general (non-symmetric) matrices.
+  - Example:
+    ```bash
+    python solve.py --method gmres --example diagonally-dominant --size 100 --max-iter 1000 --tol 1e-8
+    ```
+- **Lanczos (Symmetric):**
+  - Used for symmetric matrices (e.g., SPD or ill-conditioned symmetric problems).
+  - Example:
+    ```bash
+    python solve.py --method gmres --example ill-conditioned --size 100 --max-iter 1000 --tol 1e-8
+    ```
+- **Manual override:**
+  - You can force symmetry detection by editing the GMRESSolver initialization in code (see `is_symmetric` argument), but for most use cases, the solver will auto-detect symmetry.
+
+**Output:**
+- The solver will print the number of iterations, final residual, convergence status, and the dimension of the Krylov subspace used.
+- For symmetric matrices, the Lanczos process is used internally for efficiency.
 
 ### Conjugate Gradient Implementations
 

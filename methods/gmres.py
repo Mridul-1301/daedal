@@ -11,13 +11,22 @@ class GMRESSolver(BaseSolver):
     This implementation provides the standard GMRES without restarts.
     """
     
-    def __init__(self, max_iter: int = 1000, tol: float = 1e-6):
-        """Initialize the solver with common parameters."""
+    def __init__(self, max_iter: int = 1000, tol: float = 1e-6, is_symmetric: Optional[bool] = None):
+        """
+        Initialize the solver with common parameters.
+        
+        Args:
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+            is_symmetric: If provided, overrides automatic symmetry detection
+        """
         super().__init__(max_iter, tol)
         self.arnoldi_vectors: List[np.ndarray] = []
         self.hessenberg: Optional[np.ndarray] = None
         self.cs: np.ndarray = np.zeros(max_iter)  # Cosine values for Givens rotations
         self.sn: np.ndarray = np.zeros(max_iter)  # Sine values for Givens rotations
+        self.residual_history: List[float] = []
+        self._is_symmetric_override = is_symmetric
         
     def solve(self, A: np.ndarray, b: np.ndarray, x0: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict]:
         """
@@ -47,7 +56,13 @@ class GMRESSolver(BaseSolver):
         if beta < self.tol:
             return x, {'iterations': 0, 'final_residual': beta, 'converged': True}
         
-        # Initialize the Arnoldi basis with the normalized residual
+        # Check if matrix is symmetric (use override if provided, otherwise detect)
+        if self._is_symmetric_override is not None:
+            is_symmetric = self._is_symmetric_override
+        else:
+            is_symmetric = self._is_symmetric(A)
+        
+        # Initialize the basis with the normalized residual
         v = r / beta
         self.arnoldi_vectors = [v]
         
@@ -64,25 +79,15 @@ class GMRESSolver(BaseSolver):
         for k in range(self.max_iter):
             self.iterations = k + 1
             
-            # Arnoldi process to compute the next basis vector
-            w = A @ self.arnoldi_vectors[k]
+            # Perform Arnoldi or Lanczos iteration
+            if is_symmetric:
+                invariant_subspace = self._lanczos_iteration(A, k)
+            else:
+                invariant_subspace = self._arnoldi_iteration(A, k)
             
-            # Orthogonalize w against previous Arnoldi vectors (Modified Gram-Schmidt)
-            for j in range(k + 1):
-                self.hessenberg[j, k] = np.dot(w, self.arnoldi_vectors[j])
-                w = w - self.hessenberg[j, k] * self.arnoldi_vectors[j]
-            
-            # Get the norm of the orthogonalized vector
-            h_next = np.linalg.norm(w)
-            
-            # If h_next is too small, we have reached invariant subspace
-            if abs(h_next) < 1e-12:
+            # Check if we've reached an invariant subspace
+            if invariant_subspace:
                 break
-                
-            self.hessenberg[k + 1, k] = h_next
-            
-            # Add the new normalized vector to the Arnoldi basis
-            self.arnoldi_vectors.append(w / h_next)
             
             # Apply previous Givens rotations to the new column of the Hessenberg matrix
             for i in range(k):
@@ -109,14 +114,107 @@ class GMRESSolver(BaseSolver):
         for i in range(k + 1):
             x = x + y[i] * self.arnoldi_vectors[i]
         
+        method_name = 'Lanczos' if is_symmetric else 'Arnoldi'
+        subspace_dim = len(self.arnoldi_vectors)
+        
         stats = {
             'iterations': self.iterations,
             'final_residual': self.residual_history[-1],
             'converged': self.residual_history[-1] < self.tol,
-            'arnoldi_dimension': len(self.arnoldi_vectors)
+            'subspace_dimension': subspace_dim,
+            'method': method_name
         }
         
         return x, stats
+    
+    def _is_symmetric(self, A: np.ndarray) -> bool:
+        """
+        Check if matrix A is symmetric.
+        
+        Args:
+            A: Matrix to check
+            
+        Returns:
+            True if A is symmetric, False otherwise
+        """
+        return np.allclose(A, A.T, atol=1e-12)
+    
+    def _arnoldi_iteration(self, A: np.ndarray, k: int) -> bool:
+        """
+        Perform one step of the Arnoldi iteration.
+        
+        Args:
+            A: Coefficient matrix
+            k: Current iteration index
+            
+        Returns:
+            True if invariant subspace detected, False otherwise
+        """
+        # Arnoldi process to compute the next basis vector
+        w = A @ self.arnoldi_vectors[k]
+        
+        # Orthogonalize w against previous Arnoldi vectors (Modified Gram-Schmidt)
+        for j in range(k + 1):
+            self.hessenberg[j, k] = np.dot(w, self.arnoldi_vectors[j])
+            w = w - self.hessenberg[j, k] * self.arnoldi_vectors[j]
+        
+        # Get the norm of the orthogonalized vector
+        h_next = np.linalg.norm(w)
+        
+        # If h_next is too small, we have reached invariant subspace
+        if abs(h_next) < 1e-12:
+            return True
+            
+        self.hessenberg[k + 1, k] = h_next
+        
+        # Add the new normalized vector to the Arnoldi basis
+        self.arnoldi_vectors.append(w / h_next)
+        
+        return False
+    
+    def _lanczos_iteration(self, A: np.ndarray, k: int) -> bool:
+        """
+        Perform one step of the Lanczos iteration for symmetric matrices.
+        
+        Args:
+            A: Symmetric coefficient matrix
+            k: Current iteration index
+            
+        Returns:
+            True if invariant subspace detected, False otherwise
+        """
+        # Lanczos process to compute the next basis vector
+        w = A @ self.arnoldi_vectors[k]
+        
+        # For Lanczos, we only need to orthogonalize against the previous two vectors
+        # due to the three-term recurrence relation for symmetric matrices
+        
+        # Orthogonalize against v_k
+        alpha_k = np.dot(w, self.arnoldi_vectors[k])
+        self.hessenberg[k, k] = alpha_k
+        w = w - alpha_k * self.arnoldi_vectors[k]
+        
+        # Orthogonalize against v_{k-1} (if k > 0)
+        if k > 0:
+            beta_k = np.dot(w, self.arnoldi_vectors[k-1])
+            w = w - beta_k * self.arnoldi_vectors[k-1]
+            # For Lanczos, this should be zero due to symmetry, but we include it for numerical stability
+        
+        # Get the norm of the orthogonalized vector
+        beta_next = np.linalg.norm(w)
+        
+        # If beta_next is too small, we have reached invariant subspace
+        if abs(beta_next) < 1e-12:
+            return True
+            
+        self.hessenberg[k + 1, k] = beta_next
+        # Note: We don't set hessenberg[k, k+1] as this would be out of bounds
+        # and is not needed for the GMRES algorithm
+        
+        # Add the new normalized vector to the Lanczos basis
+        self.arnoldi_vectors.append(w / beta_next)
+        
+        return False
     
     def _apply_givens_rotation(self, k: int, g: np.ndarray) -> None:
         """
